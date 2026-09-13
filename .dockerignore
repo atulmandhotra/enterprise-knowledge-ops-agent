@@ -1,0 +1,13 @@
+.venv
+.env
+__pycache__
+*.pyc
+.pytest_cache
+.git
+.gitignore
+chroma_db
+tests
+*.docx
+*.xlsx
+*.png
+*.zip

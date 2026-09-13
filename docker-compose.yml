@@ -1,0 +1,15 @@
+services:
+  enterprise-knowledge-ops-agent:
+    build: .
+    container_name: enterprise-knowledge-ops-agent
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - chroma_data:/app/chroma_db
+      - ./documents:/app/documents:ro
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
