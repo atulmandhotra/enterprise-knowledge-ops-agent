@@ -3,6 +3,7 @@ from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
+from src.agents.input_guardrail import classify_input
 from src.agents.memory_agent import memory_agent
 from src.agents.planner import create_plan
 from src.agents.retriever_agent import retrieve_information
@@ -28,6 +29,8 @@ class AgentState(TypedDict):
 
     conversation_history: list
 
+    input_guardrail: dict
+
     memory_result: str
 
     resolved_question: str
@@ -47,6 +50,101 @@ class AgentState(TypedDict):
     final_answer: str
 
     trace: list
+
+
+# ============================================================
+# Input Guardrail Node
+# ============================================================
+
+def input_guardrail_node(state: AgentState):
+
+    question = state["question"]
+
+    result = classify_input(
+        question
+    )
+
+    trace_entry = (
+        f"Input Guardrail → "
+        f"{result['category']}"
+    )
+
+    return {
+        "input_guardrail": result,
+        "trace": state.get("trace", []) + [
+            trace_entry
+        ],
+    }
+
+
+# ============================================================
+# Input Guardrail Router
+# ============================================================
+
+def input_guardrail_router(state: AgentState):
+
+    category = state[
+        "input_guardrail"
+    ]["category"]
+
+    if category == "ENTERPRISE_QUERY":
+
+        return "memory"
+
+    if category == "GREETING":
+
+        return "guardrail_response"
+
+    if category == "OUT_OF_SCOPE":
+
+        return "guardrail_response"
+
+    # Ambiguous questions are allowed into
+    # the normal workflow. The downstream
+    # grounding and verification controls
+    # remain responsible for the final decision.
+
+    return "memory"
+
+
+# ============================================================
+# Guardrail Response Node
+# ============================================================
+
+def guardrail_response_node(state: AgentState):
+
+    category = state[
+        "input_guardrail"
+    ]["category"]
+
+    if category == "GREETING":
+
+        answer = (
+            "Hello! How can I help you with "
+            "the enterprise policies and "
+            "knowledge available in this application?"
+        )
+
+    else:
+
+        answer = (
+            "This question appears to be "
+            "outside the scope of the enterprise "
+            "knowledge base. I can help with "
+            "questions about the available "
+            "company policies and procedures."
+        )
+
+    trace_entry = (
+        "Input Guardrail Response → completed"
+    )
+
+    return {
+        "final_answer": answer,
+        "trace": state.get("trace", []) + [
+            trace_entry
+        ],
+    }
 
 
 # ============================================================
@@ -289,6 +387,20 @@ builder = StateGraph(
 )
 
 
+# ============================================================
+# Register Nodes
+# ============================================================
+
+builder.add_node(
+    "input_guardrail",
+    input_guardrail_node
+)
+
+builder.add_node(
+    "guardrail_response",
+    guardrail_response_node
+)
+
 builder.add_node(
     "memory",
     memory_node
@@ -329,10 +441,37 @@ builder.add_node(
 # Graph Flow
 # ============================================================
 
+# START → Input Guardrail
+
 builder.add_edge(
     START,
-    "memory"
+    "input_guardrail"
 )
+
+
+# Input Guardrail → Memory
+# OR
+# Input Guardrail → Guardrail Response
+
+builder.add_conditional_edges(
+    "input_guardrail",
+    input_guardrail_router,
+    {
+        "memory": "memory",
+        "guardrail_response": "guardrail_response",
+    }
+)
+
+
+# Greeting / Out-of-Scope → END
+
+builder.add_edge(
+    "guardrail_response",
+    END
+)
+
+
+# Normal Agentic Workflow
 
 builder.add_edge(
     "memory",
@@ -355,6 +494,8 @@ builder.add_edge(
 )
 
 
+# Verification Routing
+
 builder.add_conditional_edges(
     "verifier",
     verification_router,
@@ -366,10 +507,15 @@ builder.add_conditional_edges(
 )
 
 
+# Retry → Retriever
+
 builder.add_edge(
     "retry",
     "retriever"
 )
+
+
+# Finalizer → END
 
 builder.add_edge(
     "finalizer",
@@ -411,6 +557,8 @@ if __name__ == "__main__":
             }
         ],
 
+        "input_guardrail": {},
+
         "memory_result": "",
 
         "resolved_question": "",
@@ -432,9 +580,20 @@ if __name__ == "__main__":
         "trace": [],
     }
 
+
     final_state = graph.invoke(
         initial_state
     )
+
+
+    print(
+        "\n===== INPUT GUARDRAIL ====="
+    )
+
+    print(
+        final_state["input_guardrail"]
+    )
+
 
     print(
         "\n===== MEMORY ====="
@@ -444,6 +603,7 @@ if __name__ == "__main__":
         final_state["memory_result"]
     )
 
+
     print(
         "\n===== RESOLVED QUESTION ====="
     )
@@ -452,6 +612,7 @@ if __name__ == "__main__":
         final_state["resolved_question"]
     )
 
+
     print(
         "\n===== PLAN ====="
     )
@@ -459,6 +620,7 @@ if __name__ == "__main__":
     print(
         final_state["plan"]
     )
+
 
     print(
         "\n===== TRACE ====="
@@ -469,6 +631,7 @@ if __name__ == "__main__":
         print(
             f"✓ {item}"
         )
+
 
     print(
         "\n===== FINAL ANSWER ====="

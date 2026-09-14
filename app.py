@@ -30,23 +30,43 @@ if "conversation_history" not in st.session_state:
 # ============================================================
 
 def parse_verification(verification_text):
-    try:
-        return json.loads(verification_text)
 
-    except (json.JSONDecodeError, TypeError):
+    if not verification_text:
+        return {
+            "overall_verdict": "NOT REQUIRED",
+            "action": "GUARDRAIL",
+            "claims": [],
+            "limitation": {},
+            "reason": "",
+        }
+
+    try:
+
+        return json.loads(
+            verification_text
+        )
+
+    except (
+        json.JSONDecodeError,
+        TypeError
+    ):
+
         return {
             "overall_verdict": "UNKNOWN",
             "action": "UNKNOWN",
             "claims": [],
             "limitation": {},
-            "reason": "Verification output could not be interpreted.",
+            "reason": (
+                "Verification output could not "
+                "be interpreted."
+            ),
         }
 
 
 def extract_sources(evidence):
     """
-    Extract unique source documents and pages from
-    Retriever evidence.
+    Extract unique source documents and pages
+    from Retriever evidence.
     """
 
     if not evidence:
@@ -60,7 +80,9 @@ def extract_sources(evidence):
         re.DOTALL,
     )
 
-    matches = pattern.findall(evidence)
+    matches = pattern.findall(
+        evidence
+    )
 
     sources = []
     seen = set()
@@ -70,7 +92,10 @@ def extract_sources(evidence):
         source = source.strip()
         page = page.strip()
 
-        key = (source, page)
+        key = (
+            source,
+            page
+        )
 
         if key not in seen:
 
@@ -87,37 +112,103 @@ def extract_sources(evidence):
     return sources
 
 
-def get_verification_status(verification):
+def get_execution_status(
+    verification,
+    input_guardrail
+):
+
+    category = input_guardrail.get(
+        "category",
+        ""
+    )
+
+    # --------------------------------------------------------
+    # Guardrail handled request
+    # --------------------------------------------------------
+
+    if category == "GREETING":
+
+        return {
+            "verification": "NOT REQUIRED",
+            "action": "GUARDRAIL",
+            "message": (
+                "✓ Request handled by input guardrail"
+            ),
+            "message_type": "success",
+        }
+
+    if category == "OUT_OF_SCOPE":
+
+        return {
+            "verification": "NOT REQUIRED",
+            "action": "GUARDRAIL",
+            "message": (
+                "✓ Request blocked by input guardrail"
+            ),
+            "message_type": "info",
+        }
+
+    # --------------------------------------------------------
+    # Normal enterprise workflow
+    # --------------------------------------------------------
 
     verdict = verification.get(
         "overall_verdict",
-        "UNKNOWN",
+        "UNKNOWN"
     )
 
     action = verification.get(
         "action",
-        "UNKNOWN",
+        "UNKNOWN"
     )
 
     if verdict == "PASS" and action == "COMPLETE":
-        return "GROUNDED"
+
+        return {
+            "verification": "PASS",
+            "action": "COMPLETE",
+            "message": (
+                "✓ Grounded and verified "
+                "against enterprise evidence"
+            ),
+            "message_type": "success",
+        }
 
     if action == "REJECT":
-        return "NOT ESTABLISHED"
 
-    return "REVIEW"
+        return {
+            "verification": "REJECT",
+            "action": "REJECT",
+            "message": (
+                "⚠ The requested information "
+                "is not established by the "
+                "available enterprise evidence."
+            ),
+            "message_type": "warning",
+        }
+
+    return {
+        "verification": verdict,
+        "action": action,
+        "message": (
+            "The result requires review."
+        ),
+        "message_type": "info",
+    }
 
 
 # ============================================================
 # Header
 # ============================================================
 
-st.title("📚 Enterprise Knowledge Ops Agent")
+st.title(
+    "📚 Enterprise Knowledge Ops Agent"
+)
 
 st.caption(
     "Agentic enterprise knowledge assistant with "
-    "retrieval, reasoning, verification, memory, "
-    "and source attribution."
+    "input validation, retrieval, reasoning, "
+    "verification, memory, and source attribution."
 )
 
 st.divider()
@@ -157,7 +248,9 @@ if st.session_state.conversation_history:
 # Question
 # ============================================================
 
-st.subheader("Ask a Question")
+st.subheader(
+    "Ask a Question"
+)
 
 question = st.text_area(
     "Enterprise Policy Question",
@@ -187,8 +280,8 @@ if st.button(
 
     else:
 
-        # Keep a copy of the history before adding
-        # the current question.
+        # Keep a copy of the history before
+        # adding the current question.
         previous_history = (
             st.session_state.conversation_history.copy()
         )
@@ -198,9 +291,14 @@ if st.button(
         ):
 
             initial_state = {
+
                 "question": question,
 
-                "conversation_history": previous_history,
+                "conversation_history": (
+                    previous_history
+                ),
+
+                "input_guardrail": {},
 
                 "memory_result": "",
 
@@ -227,6 +325,7 @@ if st.button(
                 initial_state
             )
 
+
         # ====================================================
         # Extract State
         # ====================================================
@@ -234,6 +333,11 @@ if st.button(
         final_answer = final_state.get(
             "final_answer",
             "",
+        )
+
+        input_guardrail = final_state.get(
+            "input_guardrail",
+            {},
         )
 
         plan = final_state.get(
@@ -276,6 +380,11 @@ if st.button(
             [],
         )
 
+
+        # ====================================================
+        # Parse Results
+        # ====================================================
+
         verification = parse_verification(
             verification_text
         )
@@ -284,9 +393,11 @@ if st.button(
             evidence
         )
 
-        status = get_verification_status(
-            verification
+        execution_status = get_execution_status(
+            verification,
+            input_guardrail
         )
+
 
         # ====================================================
         # Save Conversation Memory
@@ -299,36 +410,41 @@ if st.button(
             }
         )
 
+
         # ====================================================
         # Answer
         # ====================================================
 
         st.divider()
 
-        st.subheader("Answer")
+        st.subheader(
+            "Answer"
+        )
 
-        if status == "GROUNDED":
+
+        if execution_status["message_type"] == "success":
 
             st.success(
-                "✓ Grounded and verified against enterprise evidence"
+                execution_status["message"]
             )
 
-        elif status == "NOT ESTABLISHED":
+        elif execution_status["message_type"] == "warning":
 
             st.warning(
-                "⚠ The requested information is not established "
-                "by the available enterprise evidence."
+                execution_status["message"]
             )
 
         else:
 
             st.info(
-                "The result requires review."
+                execution_status["message"]
             )
+
 
         st.write(
             final_answer
         )
+
 
         # ====================================================
         # Execution Summary
@@ -340,25 +456,26 @@ if st.button(
 
         col1, col2, col3, col4 = st.columns(4)
 
+
         with col1:
 
             st.metric(
                 "Verification",
-                verification.get(
-                    "overall_verdict",
-                    "UNKNOWN",
-                ),
+                execution_status[
+                    "verification"
+                ],
             )
+
 
         with col2:
 
             st.metric(
                 "Action",
-                verification.get(
-                    "action",
-                    "UNKNOWN",
-                ),
+                execution_status[
+                    "action"
+                ],
             )
+
 
         with col3:
 
@@ -367,12 +484,86 @@ if st.button(
                 retry_count,
             )
 
+
         with col4:
 
             st.metric(
                 "Sources",
                 len(sources),
             )
+
+
+        # ====================================================
+        # Input Guardrail
+        # ====================================================
+
+        st.subheader(
+            "🛡️ Input Guardrail"
+        )
+
+        guardrail_category = input_guardrail.get(
+            "category",
+            "UNKNOWN"
+        )
+
+        guardrail_reason = input_guardrail.get(
+            "reason",
+            ""
+        )
+
+        if guardrail_category == "GREETING":
+
+            st.success(
+                f"Classification: **{guardrail_category}**"
+            )
+
+            st.caption(
+                guardrail_reason
+            )
+
+            st.write(
+                "Enterprise retrieval was not required."
+            )
+
+        elif guardrail_category == "OUT_OF_SCOPE":
+
+            st.info(
+                f"Classification: **{guardrail_category}**"
+            )
+
+            st.caption(
+                guardrail_reason
+            )
+
+            st.write(
+                "Enterprise retrieval was intentionally skipped."
+            )
+
+        elif guardrail_category == "ENTERPRISE_QUERY":
+
+            st.success(
+                f"Classification: **{guardrail_category}**"
+            )
+
+            st.caption(
+                guardrail_reason
+            )
+
+            st.write(
+                "The request was routed to the enterprise "
+                "knowledge workflow."
+            )
+
+        else:
+
+            st.warning(
+                f"Classification: **{guardrail_category}**"
+            )
+
+            st.caption(
+                guardrail_reason
+            )
+
 
         # ====================================================
         # Memory
@@ -382,47 +573,64 @@ if st.button(
             "🧠 Memory"
         )
 
-        try:
 
-            memory = json.loads(
-                memory_result
-            )
+        if memory_result:
 
-            memory_used = memory.get(
-                "memory_used",
-                False,
-            )
+            try:
 
-            memory_summary = memory.get(
-                "memory_summary",
-                "",
-            )
-
-            if memory_used:
-
-                st.info(
-                    f"Memory used: {memory_summary}"
+                memory = json.loads(
+                    memory_result
                 )
+
+                memory_used = memory.get(
+                    "memory_used",
+                    False,
+                )
+
+                memory_summary = memory.get(
+                    "memory_summary",
+                    "",
+                )
+
+
+                if memory_used:
+
+                    st.info(
+                        f"Memory used: {memory_summary}"
+                    )
+
+                    st.write(
+                        "**Resolved Question:**"
+                    )
+
+                    st.write(
+                        resolved_question
+                    )
+
+                else:
+
+                    st.write(
+                        "No previous conversation context "
+                        "was required."
+                    )
+
+
+            except (
+                json.JSONDecodeError,
+                TypeError
+            ):
 
                 st.write(
-                    "**Resolved Question:**"
+                    "Memory result could not be interpreted."
                 )
 
-                st.write(
-                    resolved_question
-                )
-
-            else:
-
-                st.write(
-                    "No previous conversation context was required."
-                )
-
-        except (json.JSONDecodeError, TypeError):
+        else:
 
             st.write(
-                "Memory result could not be interpreted."
+                "Memory Agent was not invoked because "
+                "the input guardrail handled the request."
             )
+
 
         # ====================================================
         # Sources
@@ -432,12 +640,14 @@ if st.button(
             "📖 Sources"
         )
 
+
         if sources:
 
             for source in sources:
 
                 with st.expander(
-                    f"{source['source']} — Page {source['page']}"
+                    f"{source['source']} — "
+                    f"Page {source['page']}"
                 ):
 
                     st.write(
@@ -456,6 +666,7 @@ if st.button(
                 "No enterprise sources were identified."
             )
 
+
         # ====================================================
         # Agent Flow
         # ====================================================
@@ -464,35 +675,112 @@ if st.button(
             "🤖 Agent Execution"
         )
 
-        flow_cols = st.columns(6)
 
-        agents = [
-            ("1", "Memory", "Context"),
-            ("2", "Planner", "Plan"),
-            ("3", "Retriever", "Retrieve"),
-            ("4", "Analyst", "Analyze"),
-            ("5", "Verifier", "Verify"),
-            ("6", "Finalizer", "Answer"),
-        ]
+        # ----------------------------------------------------
+        # Guardrail-only execution
+        # ----------------------------------------------------
 
-        for column, (
-            number,
-            name,
-            description,
-        ) in zip(
-            flow_cols,
-            agents,
-        ):
+        if guardrail_category in {
+            "GREETING",
+            "OUT_OF_SCOPE",
+        }:
 
-            with column:
+            flow_cols = st.columns(2)
+
+            with flow_cols[0]:
 
                 st.markdown(
-                    f"**{number}. {name}**"
+                    "**1. Input Guardrail**"
                 )
 
                 st.caption(
-                    description
+                    "Validate / classify"
                 )
+
+            with flow_cols[1]:
+
+                st.markdown(
+                    "**2. Guardrail Response**"
+                )
+
+                st.caption(
+                    "Handle request"
+                )
+
+
+        # ----------------------------------------------------
+        # Normal enterprise execution
+        # ----------------------------------------------------
+
+        else:
+
+            flow_cols = st.columns(7)
+
+            agents = [
+
+                (
+                    "1",
+                    "Input Guardrail",
+                    "Validate"
+                ),
+
+                (
+                    "2",
+                    "Memory",
+                    "Context"
+                ),
+
+                (
+                    "3",
+                    "Planner",
+                    "Plan"
+                ),
+
+                (
+                    "4",
+                    "Retriever",
+                    "Retrieve"
+                ),
+
+                (
+                    "5",
+                    "Analyst",
+                    "Analyze"
+                ),
+
+                (
+                    "6",
+                    "Verifier",
+                    "Verify"
+                ),
+
+                (
+                    "7",
+                    "Finalizer",
+                    "Answer"
+                ),
+            ]
+
+
+            for column, (
+                number,
+                name,
+                description,
+            ) in zip(
+                flow_cols,
+                agents,
+            ):
+
+                with column:
+
+                    st.markdown(
+                        f"**{number}. {name}**"
+                    )
+
+                    st.caption(
+                        description
+                    )
+
 
         # ====================================================
         # Detailed Trace
@@ -506,67 +794,119 @@ if st.button(
                 "### Execution Order"
             )
 
+
             for item in trace:
 
                 st.write(
                     f"✓ {item}"
                 )
 
+
             st.divider()
 
+
+            # ------------------------------------------------
+            # Input Guardrail
+            # ------------------------------------------------
+
             st.markdown(
-                "### Memory Agent"
+                "### Input Guardrail"
             )
 
             st.code(
-                memory_result,
+                json.dumps(
+                    input_guardrail,
+                    indent=2,
+                ),
                 language="json",
             )
 
-            st.markdown(
-                "### Planner Agent"
-            )
 
-            st.code(
-                plan,
-                language="text",
-            )
+            # ------------------------------------------------
+            # Guardrail-only request
+            # ------------------------------------------------
 
-            st.markdown(
-                "### Retriever Agent"
-            )
+            if guardrail_category in {
+                "GREETING",
+                "OUT_OF_SCOPE",
+            }:
 
-            st.code(
-                evidence,
-                language="text",
-            )
+                st.markdown(
+                    "### Guardrail Decision"
+                )
 
-            st.markdown(
-                "### Analyst Agent"
-            )
+                st.write(
+                    "The request was handled by the "
+                    "input guardrail. No enterprise "
+                    "retrieval, analysis, or verification "
+                    "was required."
+                )
 
-            st.code(
-                analyst_result,
-                language="json",
-            )
 
-            st.markdown(
-                "### Verifier Agent"
-            )
+            # ------------------------------------------------
+            # Normal enterprise workflow details
+            # ------------------------------------------------
 
-            st.code(
-                verification_text,
-                language="json",
-            )
+            else:
 
-            st.markdown(
-                "### Finalizer"
-            )
+                st.markdown(
+                    "### Memory Agent"
+                )
 
-            st.write(
-                "Constructed the final response using "
-                "verified claims and validated limitations."
-            )
+                st.code(
+                    memory_result,
+                    language="json",
+                )
+
+
+                st.markdown(
+                    "### Planner Agent"
+                )
+
+                st.code(
+                    plan,
+                    language="text",
+                )
+
+
+                st.markdown(
+                    "### Retriever Agent"
+                )
+
+                st.code(
+                    evidence,
+                    language="text",
+                )
+
+
+                st.markdown(
+                    "### Analyst Agent"
+                )
+
+                st.code(
+                    analyst_result,
+                    language="json",
+                )
+
+
+                st.markdown(
+                    "### Verifier Agent"
+                )
+
+                st.code(
+                    verification_text,
+                    language="json",
+                )
+
+
+                st.markdown(
+                    "### Finalizer"
+                )
+
+                st.write(
+                    "Constructed the final response using "
+                    "verified claims and validated limitations."
+                )
 
 
 # ============================================================

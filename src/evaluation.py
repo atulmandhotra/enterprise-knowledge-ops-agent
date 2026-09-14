@@ -8,33 +8,54 @@ from src.agents.graph import graph
 # ============================================================
 
 TEST_CASES = [
+
+    # ========================================================
+    # Enterprise Knowledge Questions
+    # ========================================================
+
     {
         "id": "Q1",
-        "question": "What is the annual leave entitlement for regular full-time employees?",
+        "question": (
+            "What is the annual leave entitlement "
+            "for regular full-time employees?"
+        ),
         "expected": "20 working days",
         "answerable": True,
     },
+
     {
         "id": "Q2",
-        "question": "How many unused annual leave days can employees carry forward?",
+        "question": (
+            "How many unused annual leave days "
+            "can employees carry forward?"
+        ),
         "expected": "5 days",
         "answerable": True,
     },
+
     {
         "id": "Q3",
-        "question": "Are contractors eligible for employee annual leave?",
+        "question": (
+            "Are contractors eligible for "
+            "employee annual leave?"
+        ),
         "expected": "not eligible",
         "answerable": True,
     },
+
     {
         "id": "Q4",
         "question": (
-            "What approval is required when a contractor requests "
-            "more than 5 consecutive working days of unpaid time off?"
+            "What approval is required when a contractor "
+            "requests more than 5 consecutive working "
+            "days of unpaid time off?"
         ),
-        "expected": "project manager and business owner",
+        "expected": (
+            "project manager and business owner"
+        ),
         "answerable": True,
     },
+
     {
         "id": "Q5",
         "question": (
@@ -44,29 +65,66 @@ TEST_CASES = [
         "expected": "not established",
         "answerable": False,
     },
+
     {
         "id": "Q6",
         "question": (
             "What security mechanism is required for remote "
             "access to restricted systems?"
         ),
-        "expected": "company-approved secure access mechanism",
+        "expected": (
+            "company-approved secure access mechanism"
+        ),
         "answerable": True,
     },
+
     {
         "id": "Q7",
         "question": (
             "What is the approval requirement for an expense "
             "above INR 25,000?"
         ),
-        "expected": "manager and department head approval",
+        "expected": (
+            "manager and department head approval"
+        ),
         "answerable": True,
     },
+
     {
         "id": "Q8",
-        "question": "What is the company's maternity leave entitlement?",
+        "question": (
+            "What is the company's maternity leave entitlement?"
+        ),
         "expected": "not established",
         "answerable": False,
+    },
+
+    # ========================================================
+    # Input Guardrail Questions
+    # ========================================================
+
+    {
+        "id": "Q9",
+        "question": "hi, hello",
+        "expected": "GREETING",
+        "answerable": True,
+        "guardrail_category": "GREETING",
+    },
+
+    {
+        "id": "Q10",
+        "question": "what is the value of pi?",
+        "expected": "OUT_OF_SCOPE",
+        "answerable": True,
+        "guardrail_category": "OUT_OF_SCOPE",
+    },
+
+    {
+        "id": "Q11",
+        "question": "tell me about Harry Potter",
+        "expected": "OUT_OF_SCOPE",
+        "answerable": True,
+        "guardrail_category": "OUT_OF_SCOPE",
     },
 ]
 
@@ -83,16 +141,35 @@ def parse_verification(verification):
     verification as invalid instead of crashing evaluation.
     """
 
-    try:
-        return json.loads(verification)
+    if not verification:
 
-    except json.JSONDecodeError:
+        return {
+            "overall_verdict": "NOT REQUIRED",
+            "action": "GUARDRAIL",
+            "claims": [],
+            "limitation": {},
+            "reason": "",
+        }
+
+    try:
+
+        return json.loads(
+            verification
+        )
+
+    except (
+        json.JSONDecodeError,
+        TypeError,
+    ):
+
         return {
             "overall_verdict": "INVALID",
             "action": "REJECT",
             "claims": [],
             "limitation": {},
-            "reason": "Verifier output was not valid JSON.",
+            "reason": (
+                "Verifier output was not valid JSON."
+            ),
         }
 
 
@@ -104,10 +181,130 @@ def count_evidence(evidence):
     if not evidence:
         return 0
 
-    return evidence.count("Evidence ID:")
+    return evidence.count(
+        "Evidence ID:"
+    )
 
 
-def evaluate_answer(test_case, final_answer):
+# ============================================================
+# Guardrail Evaluation
+# ============================================================
+
+def evaluate_guardrail(
+    test_case,
+    final_state,
+    final_answer,
+):
+    """
+    Evaluate Input Guardrail behavior.
+
+    Checks:
+
+    1. Correct guardrail classification.
+    2. Correct response.
+    3. No enterprise evidence retrieval.
+    4. Verifier was not required.
+    """
+
+    expected_category = test_case.get(
+        "guardrail_category"
+    )
+
+    input_guardrail = final_state.get(
+        "input_guardrail",
+        {},
+    )
+
+    actual_category = input_guardrail.get(
+        "category",
+        "UNKNOWN",
+    )
+
+    # --------------------------------------------------------
+    # Classification Check
+    # --------------------------------------------------------
+
+    classification_pass = (
+        actual_category == expected_category
+    )
+
+    # --------------------------------------------------------
+    # Retrieval Check
+    # --------------------------------------------------------
+
+    evidence = final_state.get(
+        "evidence",
+        "",
+    )
+
+    evidence_count = count_evidence(
+        evidence
+    )
+
+    no_retrieval = (
+        evidence_count == 0
+    )
+
+    # --------------------------------------------------------
+    # Response Check
+    # --------------------------------------------------------
+
+    answer = final_answer.lower()
+
+    if expected_category == "GREETING":
+
+        response_pass = (
+            "hello" in answer
+            and (
+                "enterprise policies" in answer
+                or "how can i help" in answer
+            )
+        )
+
+    elif expected_category == "OUT_OF_SCOPE":
+
+        response_pass = (
+            "outside the scope" in answer
+            or "out of scope" in answer
+        )
+
+    else:
+
+        response_pass = True
+
+    # --------------------------------------------------------
+    # Verifier Check
+    # --------------------------------------------------------
+
+    verification = final_state.get(
+        "verification",
+        "",
+    )
+
+    verification_not_required = (
+        not verification
+    )
+
+    # --------------------------------------------------------
+    # Final Guardrail Result
+    # --------------------------------------------------------
+
+    return (
+        classification_pass
+        and no_retrieval
+        and response_pass
+        and verification_not_required
+    )
+
+
+# ============================================================
+# Enterprise Answer Evaluation
+# ============================================================
+
+def evaluate_answer(
+    test_case,
+    final_answer,
+):
     """
     Lightweight evaluation of the final answer.
 
@@ -117,13 +314,23 @@ def evaluate_answer(test_case, final_answer):
     It is intentionally separate from the Verifier.
 
     The Verifier checks:
+
         Is the claim supported by enterprise evidence?
 
     This function checks:
+
         Did the application produce the expected result?
     """
 
     answer = final_answer.lower()
+
+    # ========================================================
+    # Guardrail Cases
+    # ========================================================
+
+    if "guardrail_category" in test_case:
+
+        return True
 
     # ========================================================
     # Unanswerable Questions
@@ -215,7 +422,8 @@ def evaluate_answer(test_case, final_answer):
     if test_case["id"] == "Q6":
 
         return (
-            "company-approved secure access mechanism" in answer
+            "company-approved secure access mechanism"
+            in answer
         )
 
     # ========================================================
@@ -237,7 +445,9 @@ def evaluate_answer(test_case, final_answer):
     # Fallback
     # ========================================================
 
-    expected = test_case["expected"].lower()
+    expected = test_case[
+        "expected"
+    ].lower()
 
     return expected in answer
 
@@ -252,7 +462,9 @@ def run_evaluation():
 
     print("\n")
     print("=" * 70)
-    print("ENTERPRISE KNOWLEDGE OPS AGENT - EVALUATION")
+    print(
+        "ENTERPRISE KNOWLEDGE OPS AGENT - EVALUATION"
+    )
     print("=" * 70)
 
     for test_case in TEST_CASES:
@@ -270,18 +482,38 @@ def run_evaluation():
         # ----------------------------------------------------
 
         initial_state = {
-            "question": test_case["question"],
+
+            "question": test_case[
+                "question"
+            ],
+
+            "conversation_history": [],
+
+            "input_guardrail": {},
+
+            "memory_result": "",
+
+            "resolved_question": "",
+
             "plan": "",
+
             "evidence": "",
+
             "analyst_result": "",
+
             "verification": "",
+
             "verification_feedback": "",
+
             "retry_count": 0,
+
             "final_answer": "",
+
+            "trace": [],
         }
 
         # ----------------------------------------------------
-        # Execute Complete Agent Graph
+        # Execute Graph
         # ----------------------------------------------------
 
         final_state = graph.invoke(
@@ -290,65 +522,122 @@ def run_evaluation():
 
         final_answer = final_state.get(
             "final_answer",
-            ""
+            "",
         )
 
-        verification = parse_verification(
-            final_state.get(
-                "verification",
-                ""
-            )
+        # ----------------------------------------------------
+        # Input Guardrail
+        # ----------------------------------------------------
+
+        input_guardrail = final_state.get(
+            "input_guardrail",
+            {},
         )
+
+        guardrail_category = input_guardrail.get(
+            "category",
+            "UNKNOWN",
+        )
+
+        # ----------------------------------------------------
+        # Verification / Guardrail Status
+        # ----------------------------------------------------
+
+        if "guardrail_category" in test_case:
+
+            # Guardrail requests intentionally bypass
+            # Memory, Planner, Retriever, Analyst and Verifier.
+
+            verdict = "NOT REQUIRED"
+            action = "GUARDRAIL"
+
+        else:
+
+            verification = parse_verification(
+                final_state.get(
+                    "verification",
+                    "",
+                )
+            )
+
+            verdict = verification.get(
+                "overall_verdict",
+                "UNKNOWN",
+            )
+
+            action = verification.get(
+                "action",
+                "UNKNOWN",
+            )
 
         # ----------------------------------------------------
         # Observability Metrics
         # ----------------------------------------------------
 
-        verdict = verification.get(
-            "overall_verdict",
-            "UNKNOWN"
-        )
-
-        action = verification.get(
-            "action",
-            "UNKNOWN"
-        )
-
         retry_count = final_state.get(
             "retry_count",
-            0
+            0,
         )
 
         evidence_count = count_evidence(
             final_state.get(
                 "evidence",
-                ""
+                "",
             )
         )
 
-        evaluation_pass = evaluate_answer(
-            test_case,
-            final_answer
-        )
+        # ----------------------------------------------------
+        # Evaluation Check
+        # ----------------------------------------------------
+
+        if "guardrail_category" in test_case:
+
+            evaluation_pass = evaluate_guardrail(
+                test_case,
+                final_state,
+                final_answer,
+            )
+
+        else:
+
+            evaluation_pass = evaluate_answer(
+                test_case,
+                final_answer,
+            )
 
         # ----------------------------------------------------
-        # Display Test Result
+        # Display Result
         # ----------------------------------------------------
 
         print("\nFinal Answer:")
-        print(final_answer)
+        print(
+            final_answer
+        )
+
+        print("\nInput Guardrail:")
+        print(
+            guardrail_category
+        )
 
         print("\nVerification Verdict:")
-        print(verdict)
+        print(
+            verdict
+        )
 
         print("\nVerification Action:")
-        print(action)
+        print(
+            action
+        )
 
         print("\nEvidence Chunks:")
-        print(evidence_count)
+        print(
+            evidence_count
+        )
 
         print("\nRetry Count:")
-        print(retry_count)
+        print(
+            retry_count
+        )
 
         print("\nEvaluation Check:")
         print(
@@ -367,6 +656,15 @@ def run_evaluation():
                 "question": test_case["question"],
                 "expected": test_case["expected"],
                 "answerable": test_case["answerable"],
+                "guardrail_category": (
+                    test_case.get(
+                        "guardrail_category",
+                        "",
+                    )
+                ),
+                "actual_guardrail_category": (
+                    guardrail_category
+                ),
                 "final_answer": final_answer,
                 "verification_verdict": verdict,
                 "verification_action": action,
@@ -377,10 +675,12 @@ def run_evaluation():
         )
 
     # ========================================================
-    # Evaluation Summary
+    # Overall Evaluation Summary
     # ========================================================
 
-    total_tests = len(results)
+    total_tests = len(
+        results
+    )
 
     passed_tests = sum(
         1
@@ -393,7 +693,10 @@ def run_evaluation():
     )
 
     pass_rate = (
-        (passed_tests / total_tests) * 100
+        (
+            passed_tests
+            / total_tests
+        ) * 100
         if total_tests > 0
         else 0
     )
@@ -409,36 +712,88 @@ def run_evaluation():
     )
 
     # ========================================================
-    # Print Summary
+    # Guardrail Summary
+    # ========================================================
+
+    guardrail_results = [
+        result
+        for result in results
+        if result["guardrail_category"]
+    ]
+
+    guardrail_passed = sum(
+        1
+        for result in guardrail_results
+        if result["evaluation_pass"]
+    )
+
+    guardrail_total = len(
+        guardrail_results
+    )
+
+    guardrail_pass_rate = (
+        (
+            guardrail_passed
+            / guardrail_total
+        ) * 100
+        if guardrail_total > 0
+        else 0
+    )
+
+    # ========================================================
+    # Print Overall Summary
     # ========================================================
 
     print("\n")
     print("=" * 70)
-    print("EVALUATION SUMMARY")
+    print(
+        "EVALUATION SUMMARY"
+    )
     print("=" * 70)
 
     print(
-        f"\nTotal Test Cases : {total_tests}"
+        f"\nTotal Test Cases : "
+        f"{total_tests}"
     )
 
     print(
-        f"Passed           : {passed_tests}"
+        f"Passed           : "
+        f"{passed_tests}"
     )
 
     print(
-        f"Failed           : {failed_tests}"
+        f"Failed           : "
+        f"{failed_tests}"
     )
 
     print(
-        f"Pass Rate        : {pass_rate:.2f}%"
+        f"Pass Rate        : "
+        f"{pass_rate:.2f}%"
     )
 
     print(
-        f"Total Retries    : {total_retries}"
+        f"Total Retries    : "
+        f"{total_retries}"
     )
 
     print(
-        f"Evidence Chunks  : {total_evidence}"
+        f"Evidence Chunks  : "
+        f"{total_evidence}"
+    )
+
+    print(
+        f"\nGuardrail Tests  : "
+        f"{guardrail_total}"
+    )
+
+    print(
+        f"Guardrail Passed : "
+        f"{guardrail_passed}"
+    )
+
+    print(
+        f"Guardrail Rate   : "
+        f"{guardrail_pass_rate:.2f}%"
     )
 
     # ========================================================
@@ -446,8 +801,12 @@ def run_evaluation():
     # ========================================================
 
     print("\n")
-    print("Test Case Results:")
-    print("-" * 70)
+    print(
+        "Test Case Results:"
+    )
+    print(
+        "-" * 70
+    )
 
     for result in results:
 
@@ -461,11 +820,14 @@ def run_evaluation():
             f"{result['id']} | "
             f"{status} | "
             f"Verdict={result['verification_verdict']} | "
+            f"Action={result['verification_action']} | "
             f"Retries={result['retry_count']} | "
             f"Evidence={result['evidence_count']}"
         )
 
-    print("-" * 70)
+    print(
+        "-" * 70
+    )
 
     return results
 
@@ -475,4 +837,5 @@ def run_evaluation():
 # ============================================================
 
 if __name__ == "__main__":
+
     run_evaluation()
