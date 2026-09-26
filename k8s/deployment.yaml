@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: enterprise-knowledge-ops
+  namespace: enterprise-knowledge-ops
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: enterprise-knowledge-ops
+
+  template:
+    metadata:
+      labels:
+        app: enterprise-knowledge-ops
+
+    spec:
+      imagePullSecrets:
+        - name: acr-secret
+
+      containers:
+        - name: enterprise-knowledge-ops-agent
+
+          image: enterpriseknowledgeopsacr.azurecr.io/enterprise-knowledge-ops-agent:IMAGE_TAG_PLACEHOLDER
+
+          ports:
+            - name: streamlit
+              containerPort: 8501
+              protocol: TCP
+
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+
+          envFrom:
+            - secretRef:
+                name: app-secrets
+
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

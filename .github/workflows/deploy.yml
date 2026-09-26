@@ -1,51 +1,66 @@
 name: Build and Deploy to AKS
 
 on:
+
   push:
     branches:
       - main
 
+
 permissions:
   contents: read
 
+
 env:
+
   ACR_LOGIN_SERVER: enterpriseknowledgeopsacr.azurecr.io
+
   IMAGE_NAME: enterprise-knowledge-ops-agent
+
   NAMESPACE: enterprise-knowledge-ops
+
   DEPLOYMENT: enterprise-knowledge-ops
 
+
 jobs:
+
   build-and-deploy:
+
     runs-on: ubuntu-latest
 
     steps:
 
-      # ---------------------------------------------------------
+      # ========================================
       # Checkout
-      # ---------------------------------------------------------
+      # ========================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ---------------------------------------------------------
-      # Login to Azure Container Registry
-      # ---------------------------------------------------------
+      # ========================================
+      # Login to ACR
+      # ========================================
 
       - name: Login to Azure Container Registry
         uses: docker/login-action@v3
+
         with:
+
           registry: ${{ env.ACR_LOGIN_SERVER }}
+
           username: ${{ secrets.ACR_USERNAME }}
+
           password: ${{ secrets.ACR_PASSWORD }}
 
 
-      # ---------------------------------------------------------
+      # ========================================
       # Build and push Docker image
-      # ---------------------------------------------------------
+      # ========================================
 
       - name: Build and push Docker image
         run: |
+
           IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
 
           echo "Building image:"
@@ -55,163 +70,166 @@ jobs:
             -t "$IMAGE" \
             .
 
+          echo "Pushing image..."
+
           docker push "$IMAGE"
 
 
-      # ---------------------------------------------------------
-      # Configure kubectl
-      # ---------------------------------------------------------
+      # ========================================
+      # Install kubectl
+      # ========================================
 
       - name: Configure kubectl
         uses: azure/setup-kubectl@v4
 
 
-      # ---------------------------------------------------------
-      # Configure Kubernetes credentials
-      # ---------------------------------------------------------
+      # ========================================
+      # Configure Kubernetes
+      # ========================================
 
       - name: Configure Kubernetes credentials
         run: |
+
           mkdir -p ~/.kube
 
           cat > ~/.kube/config <<EOF
+
           apiVersion: v1
+
           kind: Config
 
           clusters:
+
           - name: aks
+
             cluster:
+
               server: ${{ secrets.KUBE_SERVER }}
+
               certificate-authority-data: ${{ secrets.KUBE_CA }}
 
+
           contexts:
+
           - name: aks
+
             context:
+
               cluster: aks
+
               namespace: ${{ env.NAMESPACE }}
+
               user: github-actions
+
 
           current-context: aks
 
+
           users:
+
           - name: github-actions
+
             user:
+
               token: ${{ secrets.KUBE_TOKEN }}
+
           EOF
 
 
-      # ---------------------------------------------------------
-      # Create/update application secrets
-      # ---------------------------------------------------------
+      # ========================================
+      # Generate Kubernetes Secret
+      # ========================================
 
-      - name: Create or update application secrets
+      - name: Generate application secret
         run: |
-          kubectl create secret generic app-secrets \
-            --namespace ${NAMESPACE} \
-            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
-            --from-literal=LANGSMITH_TRACING="${{ secrets.LANGSMITH_TRACING }}" \
-            --from-literal=LANGSMITH_ENDPOINT="${{ secrets.LANGSMITH_ENDPOINT }}" \
-            --from-literal=LANGSMITH_API_KEY="${{ secrets.LANGSMITH_API_KEY }}" \
-            --from-literal=LANGSMITH_PROJECT="${{ secrets.LANGSMITH_PROJECT }}" \
-            --dry-run=client \
-            -o yaml | kubectl apply -f -
+
+          sed \
+            -e "s|OPENAI_API_KEY_PLACEHOLDER|${{ secrets.OPENAI_API_KEY }}|g" \
+            -e "s|LANGSMITH_TRACING_PLACEHOLDER|${{ secrets.LANGSMITH_TRACING }}|g" \
+            -e "s|LANGSMITH_ENDPOINT_PLACEHOLDER|${{ secrets.LANGSMITH_ENDPOINT }}|g" \
+            -e "s|LANGSMITH_API_KEY_PLACEHOLDER|${{ secrets.LANGSMITH_API_KEY }}|g" \
+            -e "s|LANGSMITH_PROJECT_PLACEHOLDER|${{ secrets.LANGSMITH_PROJECT }}|g" \
+            k8s/secret.yaml \
+            | kubectl apply -f -
 
 
-      # ---------------------------------------------------------
-      # Configure Kubernetes health probes
-      # ---------------------------------------------------------
+      # ========================================
+      # Deploy Deployment manifest
+      # ========================================
 
-      - name: Configure health probes
+      - name: Deploy application
         run: |
-          kubectl patch deployment ${DEPLOYMENT} \
-            --namespace ${NAMESPACE} \
-            --type=strategic \
-            -p '{
-              "spec": {
-                "template": {
-                  "spec": {
-                    "containers": [
-                      {
-                        "name": "enterprise-knowledge-ops-agent",
-                        "ports": [
-                          {
-                            "containerPort": 8501
-                          },
-                          {
-                            "containerPort": 8080
-                          }
-                        ],
-                        "livenessProbe": {
-                          "httpGet": {
-                            "path": "/health/live",
-                            "port": 8080
-                          },
-                          "initialDelaySeconds": 20,
-                          "periodSeconds": 10,
-                          "timeoutSeconds": 3,
-                          "failureThreshold": 3
-                        },
-                        "readinessProbe": {
-                          "httpGet": {
-                            "path": "/health/ready",
-                            "port": 8080
-                          },
-                          "initialDelaySeconds": 10,
-                          "periodSeconds": 5,
-                          "timeoutSeconds": 3,
-                          "failureThreshold": 6
-                        }
-                      }
-                    ]
-                  }
-                }
-              }
-            '
+
+          echo "Deploying image:"
+
+          echo "${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
 
 
-      # ---------------------------------------------------------
-      # Update deployment image
-      # ---------------------------------------------------------
+          sed \
+            "s|IMAGE_TAG_PLACEHOLDER|${GITHUB_SHA}|g" \
+            k8s/deployment.yaml \
+            | kubectl apply -f -
 
-      - name: Update deployment image
+
+      # ========================================
+      # Deploy Service manifest
+      # ========================================
+
+      - name: Deploy service
         run: |
-          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
 
-          kubectl set image deployment/${DEPLOYMENT} \
-            enterprise-knowledge-ops-agent="$IMAGE" \
-            --namespace ${NAMESPACE}
+          kubectl apply \
+            -f k8s/service.yaml
 
 
-      # ---------------------------------------------------------
+      # ========================================
       # Wait for rollout
-      # ---------------------------------------------------------
+      # ========================================
 
       - name: Wait for rollout
         run: |
+
           kubectl rollout status \
             deployment/${DEPLOYMENT} \
             --namespace ${NAMESPACE} \
             --timeout=5m
 
 
-      # ---------------------------------------------------------
+      # ========================================
       # Verify deployment
-      # ---------------------------------------------------------
+      # ========================================
 
       - name: Verify deployment
         run: |
-          echo "Pods:"
+
+          echo "========================================"
+
+          echo "PODS"
+
+          echo "========================================"
+
           kubectl get pods \
             --namespace ${NAMESPACE} \
             -o wide
 
-          echo ""
-          echo "Deployment:"
-          kubectl get deployment ${DEPLOYMENT} \
+
+          echo "========================================"
+
+          echo "DEPLOYMENT"
+
+          echo "========================================"
+
+          kubectl get deployment \
+            ${DEPLOYMENT} \
             --namespace ${NAMESPACE}
 
-          echo ""
-          echo "Pod readiness:"
-          kubectl get pods \
-            --namespace ${NAMESPACE} \
-            -o jsonpath="{range .items[*]}{.metadata.name}{' -> '}{.status.containerStatuses[0].ready}{'\n'}{end}"
+
+          echo "========================================"
+
+          echo "SERVICE"
+
+          echo "========================================"
+
+          kubectl get service \
+            enterprise-knowledge-ops \
+            --namespace ${NAMESPACE}
