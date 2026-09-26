@@ -15,5 +15,6 @@ COPY documents ./documents
 COPY docker_entrypoint.py .
 
 EXPOSE 8501
+EXPOSE 8080
 
 ENTRYPOINT ["python", "docker_entrypoint.py"]

@@ -19,8 +19,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # ---------------------------------------------------------
+      # Login to Azure Container Registry
+      # ---------------------------------------------------------
 
       - name: Login to Azure Container Registry
         uses: docker/login-action@v3
@@ -29,9 +39,17 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
+
+      # ---------------------------------------------------------
+      # Build and push Docker image
+      # ---------------------------------------------------------
+
       - name: Build and push Docker image
         run: |
           IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
+
+          echo "Building image:"
+          echo "$IMAGE"
 
           docker build \
             -t "$IMAGE" \
@@ -39,8 +57,18 @@ jobs:
 
           docker push "$IMAGE"
 
+
+      # ---------------------------------------------------------
+      # Configure kubectl
+      # ---------------------------------------------------------
+
       - name: Configure kubectl
         uses: azure/setup-kubectl@v4
+
+
+      # ---------------------------------------------------------
+      # Configure Kubernetes credentials
+      # ---------------------------------------------------------
 
       - name: Configure Kubernetes credentials
         run: |
@@ -71,6 +99,11 @@ jobs:
               token: ${{ secrets.KUBE_TOKEN }}
           EOF
 
+
+      # ---------------------------------------------------------
+      # Create/update application secrets
+      # ---------------------------------------------------------
+
       - name: Create or update application secrets
         run: |
           kubectl create secret generic app-secrets \
@@ -83,6 +116,63 @@ jobs:
             --dry-run=client \
             -o yaml | kubectl apply -f -
 
+
+      # ---------------------------------------------------------
+      # Configure Kubernetes health probes
+      # ---------------------------------------------------------
+
+      - name: Configure health probes
+        run: |
+          kubectl patch deployment ${DEPLOYMENT} \
+            --namespace ${NAMESPACE} \
+            --type=strategic \
+            -p '{
+              "spec": {
+                "template": {
+                  "spec": {
+                    "containers": [
+                      {
+                        "name": "enterprise-knowledge-ops-agent",
+                        "ports": [
+                          {
+                            "containerPort": 8501
+                          },
+                          {
+                            "containerPort": 8080
+                          }
+                        ],
+                        "livenessProbe": {
+                          "httpGet": {
+                            "path": "/health/live",
+                            "port": 8080
+                          },
+                          "initialDelaySeconds": 20,
+                          "periodSeconds": 10,
+                          "timeoutSeconds": 3,
+                          "failureThreshold": 3
+                        },
+                        "readinessProbe": {
+                          "httpGet": {
+                            "path": "/health/ready",
+                            "port": 8080
+                          },
+                          "initialDelaySeconds": 10,
+                          "periodSeconds": 5,
+                          "timeoutSeconds": 3,
+                          "failureThreshold": 6
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            '
+
+
+      # ---------------------------------------------------------
+      # Update deployment image
+      # ---------------------------------------------------------
+
       - name: Update deployment image
         run: |
           IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
@@ -91,6 +181,11 @@ jobs:
             enterprise-knowledge-ops-agent="$IMAGE" \
             --namespace ${NAMESPACE}
 
+
+      # ---------------------------------------------------------
+      # Wait for rollout
+      # ---------------------------------------------------------
+
       - name: Wait for rollout
         run: |
           kubectl rollout status \
@@ -98,10 +193,25 @@ jobs:
             --namespace ${NAMESPACE} \
             --timeout=5m
 
+
+      # ---------------------------------------------------------
+      # Verify deployment
+      # ---------------------------------------------------------
+
       - name: Verify deployment
         run: |
+          echo "Pods:"
           kubectl get pods \
-            --namespace ${NAMESPACE}
+            --namespace ${NAMESPACE} \
+            -o wide
 
+          echo ""
+          echo "Deployment:"
           kubectl get deployment ${DEPLOYMENT} \
             --namespace ${NAMESPACE}
+
+          echo ""
+          echo "Pod readiness:"
+          kubectl get pods \
+            --namespace ${NAMESPACE} \
+            -o jsonpath="{range .items[*]}{.metadata.name}{' -> '}{.status.containerStatuses[0].ready}{'\n'}{end}"

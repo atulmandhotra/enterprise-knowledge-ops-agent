@@ -3,11 +3,24 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.health import start_health_server
+
+
 APP_DIR = Path("/app")
 CHROMA_DIR = APP_DIR / "chroma_db"
 MARKER = CHROMA_DIR / ".ingestion_complete"
 
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# Start health server immediately.
+#
+# /health/live  -> 200 while the application process is alive
+# /health/ready -> 503 until ingestion is complete
+#
+# This is important because document ingestion can take some time.
+start_health_server()
+
 
 if not MARKER.exists():
     print("=" * 60)
@@ -25,12 +38,19 @@ if not MARKER.exists():
         print("Document ingestion failed. Streamlit will not start.")
         sys.exit(result.returncode)
 
-    MARKER.write_text("Document ingestion completed successfully.\n", encoding="utf-8")
+    MARKER.write_text(
+        "Document ingestion completed successfully.\n",
+        encoding="utf-8",
+    )
+
     print("Initial Chroma ingestion completed.")
+
 else:
     print("Chroma database already initialized. Skipping ingestion.")
 
+
 print("Starting Streamlit...")
+
 os.execvp(
     "streamlit",
     [
