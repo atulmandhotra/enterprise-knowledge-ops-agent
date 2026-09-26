@@ -75,7 +75,7 @@ jobs:
           IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
 
           kubectl set image deployment/${DEPLOYMENT} \
-            ${DEPLOYMENT}="$IMAGE" \
+            enterprise-knowledge-ops-agent="$IMAGE" \
             --namespace ${NAMESPACE}
 
       - name: Wait for rollout
