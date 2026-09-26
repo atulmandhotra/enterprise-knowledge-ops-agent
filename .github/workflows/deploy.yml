@@ -49,6 +49,7 @@ jobs:
           cat > ~/.kube/config <<EOF
           apiVersion: v1
           kind: Config
+
           clusters:
           - name: aks
             cluster:
@@ -69,6 +70,18 @@ jobs:
             user:
               token: ${{ secrets.KUBE_TOKEN }}
           EOF
+
+      - name: Create or update application secrets
+        run: |
+          kubectl create secret generic app-secrets \
+            --namespace ${NAMESPACE} \
+            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+            --from-literal=LANGSMITH_TRACING="${{ secrets.LANGSMITH_TRACING }}" \
+            --from-literal=LANGSMITH_ENDPOINT="${{ secrets.LANGSMITH_ENDPOINT }}" \
+            --from-literal=LANGSMITH_API_KEY="${{ secrets.LANGSMITH_API_KEY }}" \
+            --from-literal=LANGSMITH_PROJECT="${{ secrets.LANGSMITH_PROJECT }}" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
 
       - name: Update deployment image
         run: |
