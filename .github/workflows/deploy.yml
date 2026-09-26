@@ -1,26 +1,20 @@
 name: Build and Deploy to AKS
 
 on:
-
   push:
     branches:
       - main
 
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-
 env:
-
   ACR_LOGIN_SERVER: enterpriseknowledgeopsacr.azurecr.io
-
   IMAGE_NAME: enterprise-knowledge-ops-agent
-
   NAMESPACE: enterprise-knowledge-ops
-
   DEPLOYMENT: enterprise-knowledge-ops
-
 
 jobs:
 
