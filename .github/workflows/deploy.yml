@@ -1,0 +1,94 @@
+name: Build and Deploy to AKS
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  ACR_LOGIN_SERVER: enterpriseknowledgeopsacr.azurecr.io
+  IMAGE_NAME: enterprise-knowledge-ops-agent
+  NAMESPACE: enterprise-knowledge-ops
+  DEPLOYMENT: enterprise-knowledge-ops
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
+
+          docker build \
+            -t "$IMAGE" \
+            .
+
+          docker push "$IMAGE"
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure Kubernetes credentials
+        run: |
+          mkdir -p ~/.kube
+
+          cat > ~/.kube/config <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: aks
+            cluster:
+              server: ${{ secrets.KUBE_SERVER }}
+              certificate-authority-data: ${{ secrets.KUBE_CA }}
+
+          contexts:
+          - name: aks
+            context:
+              cluster: aks
+              namespace: ${{ env.NAMESPACE }}
+              user: github-actions
+
+          current-context: aks
+
+          users:
+          - name: github-actions
+            user:
+              token: ${{ secrets.KUBE_TOKEN }}
+          EOF
+
+      - name: Update deployment image
+        run: |
+          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
+
+          kubectl set image deployment/${DEPLOYMENT} \
+            ${DEPLOYMENT}="$IMAGE" \
+            --namespace ${NAMESPACE}
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status \
+            deployment/${DEPLOYMENT} \
+            --namespace ${NAMESPACE} \
+            --timeout=5m
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods \
+            --namespace ${NAMESPACE}
+
+          kubectl get deployment ${DEPLOYMENT} \
+            --namespace ${NAMESPACE}
